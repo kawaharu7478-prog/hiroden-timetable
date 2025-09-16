@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>列車走行位置表示</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body { font-family: sans-serif; }
+    svg { width: 2000px; height: 400px; }
+    .line { stroke: black; stroke-width: 2; fill: none; }
+    .station-label { text-anchor: middle; font-size: 12px; }
+    .train { font-size: 12px; }
+    .train rect { stroke: black; fill: white; }
+    .train.gray rect { fill: gray; }
+    #clock { font-size: 20px; margin: 10px 0; }
+  </style>
+</head>
+<body>
+  <h2>列車走行位置</h2>
+  <div id="clock"></div>
+  <div style="overflow-x: scroll; width: 100%;">
+    <svg id="chart"></svg>
+  </div>
+
+  <script>
+    const stations = [
+      "宮島口","阿品","阿品東","地御前","ＪＡ","宮内","廿市役","廿日市","山陽",
+      "楽々園","佐伯区","五日市","修大協","井口","商工","草津南","草津","古江",
+      "高須","東高須","西広島","福島町","西観音","観音町","天満町","小網町",
+      "土橋","十日市","本川町","ドーム","紙屋西","紙屋東","立町","八丁堀",
+      "胡町","銀山町","稲荷町","広島駅"
+    ];
+
+    const svg = d3.select("#chart");
+    const width = stations.length * 80;
+    const height = 300;
+    svg.attr("width", width).attr("height", height);
+
+    const x = d3.scalePoint()
+      .domain(stations)
+      .range([50, width - 50]);
+
+    svg.selectAll(".station-label")
+      .data(stations)
+      .enter()
+      .append("text")
+      .attr("class", "station-label")
+      .attr("x", d => x(d))
+      .attr("y", 150)
+      .text(d => d);
+
+    svg.append("line")
+      .attr("class", "line")
+      .attr("x1", 50).attr("x2", width - 50)
+      .attr("y1", 80).attr("y2", 80); // 上り
+    svg.append("line")
+      .attr("class", "line")
+      .attr("x1", 50).attr("x2", width - 50)
+      .attr("y1", 220).attr("y2", 220); // 下り
+
+    function parseTime(timeStr) {
+      if (!timeStr) return null;
+      const parts = timeStr.split(":").map(Number);
+      return new Date(0, 0, 0, parts[0], parts[1], 0);
+    }
+
+    function getCurrentTime() {
+      const now = new Date();
+      return new Date(0, 0, 0, now.getHours(), now.getMinutes(), now.getSeconds());
+    }
+
+    function updateClock() {
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, "0");
+      const mm = String(now.getMinutes()).padStart(2, "0");
+      const ss = String(now.getSeconds()).padStart(2, "0");
+      document.getElementById("clock").textContent = `現在時刻：${hh}:${mm}:${ss}`;
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    function updateTrains(data) {
+      const now = getCurrentTime();
+
+      data.forEach(train => {
+        const times = stations.map(st => parseTime(train[st]));
+
+        for (let i = 0; i < stations.length - 1; i++) {
+          if (times[i] && times[i+1] && now >= times[i] && now <= times[i+1]) {
+            const progress = (now - times[i]) / (times[i+1] - times[i]);
+            const xPos = x(stations[i]) + (x(stations[i+1]) - x(stations[i])) * progress;
+            const yPos = (train.direction === "up") ? 80 : 220;
+
+            let g = svg.select("#train-" + train.train_id);
+            if (g.empty()) {
+              g = svg.append("g")
+                .attr("id", "train-" + train.train_id)
+                .attr("class", "train");
+              g.append("rect").attr("width", 40).attr("height", 20).attr("y", -10).attr("x", -20);
+              g.append("text").attr("dy", 4).attr("text-anchor", "middle");
+              g.append("line")
+                .attr("class", "arrow")
+                .attr("y1", 0).attr("y2", 0)
+                .attr("stroke", "black").attr("marker-end", "url(#arrow)");
+            }
+
+            g.attr("transform", `translate(${xPos}, ${yPos})`);
+            g.select("text").text(train.train_name);
+
+            if (+train.train_id >= 30000) {
+              g.classed("gray", true);
+            } else {
+              g.classed("gray", false);
+            }
+
+            g.select(".arrow")
+              .attr("x1", 0)
+              .attr("x2", (train.direction === "up" ? -20 : 20));
+
+            return;
+          }
+        }
+
+        svg.select("#train-" + train.train_id).remove();
+      });
+    }
+
+    svg.append("defs").append("marker")
+      .attr("id", "arrow")
+      .attr("viewBox", "0 -5 10 10")
+      .attr("refX", 10).attr("refY", 0)
+      .attr("markerWidth", 4).attr("markerHeight", 4)
+      .attr("orient", "auto")
+      .append("path")
+      .attr("d", "M0,-5L10,0L0,5")
+      .attr("fill", "black");
+
+    d3.csv("trains.csv").then(data => {
+      // 毎秒更新（スムーズに補間して動く）
+      setInterval(() => updateTrains(data), 1000);
+    });
+  </script>
+</body>
+</html>
