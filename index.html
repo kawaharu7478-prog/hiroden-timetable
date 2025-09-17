@@ -5,7 +5,15 @@
   <title>広電 列車走行位置</title>
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <style>
-    body { font-family: sans-serif; }
+    body { font-family: sans-serif; margin: 0; padding: 0; }
+    .container {
+      width: 100%;
+      overflow-x: auto;   /* 横スクロール可能にする */
+      border-bottom: 1px solid #ccc;
+    }
+    svg {
+      display: block;
+    }
     .station { font-size: 12px; }
     .train rect {
       height: 20px;
@@ -22,13 +30,15 @@
     }
     .time-display {
       font-size: 16px;
-      margin-bottom: 10px;
+      margin: 10px;
     }
   </style>
 </head>
 <body>
   <div class="time-display" id="current-time"></div>
-  <svg id="chart" width="1200" height="400"></svg>
+  <div class="container">
+    <svg id="chart" height="400"></svg>
+  </div>
 
   <script>
     const stations = [
@@ -38,22 +48,26 @@
       "紙屋西","紙屋東","立町","八丁堀","胡町","銀山町","稲荷町","広島駅"
     ];
 
-    const svg = d3.select("#chart");
-    const width = +svg.attr("width");
-    const height = +svg.attr("height");
-
+    const height = 400;
     const margin = {top: 50, right: 50, bottom: 50, left: 50};
     const lineY = height / 2;
 
-    // スケール
+    // 駅間隔を広く設定（例: 150pxごと）
+    const stationSpacing = 150;
+    const svgWidth = margin.left + margin.right + (stations.length - 1) * stationSpacing;
+
+    const svg = d3.select("#chart")
+      .attr("width", svgWidth)
+      .attr("height", height);
+
     const xScale = d3.scalePoint()
       .domain(stations)
-      .range([margin.left, width - margin.right]);
+      .range([margin.left, svgWidth - margin.right]);
 
     // 路線描画
     svg.append("line")
       .attr("x1", margin.left)
-      .attr("x2", width - margin.right)
+      .attr("x2", svgWidth - margin.right)
       .attr("y1", lineY)
       .attr("y2", lineY)
       .attr("stroke", "black");
@@ -73,7 +87,7 @@
       .enter()
       .append("text")
       .attr("x", d => xScale(d))
-      .attr("y", lineY - 10)
+      .attr("y", lineY - 15)
       .attr("text-anchor", "middle")
       .attr("class", "station")
       .text(d => d);
@@ -87,11 +101,10 @@
     setInterval(updateTimeDisplay, 1000);
     updateTimeDisplay();
 
-    // CSV読み込み（raw.githubusercontent.com を利用）
+    // CSV 読み込み（raw.githubusercontent.com を利用）
     d3.csv("https://raw.githubusercontent.com/kawaharu7478-prog/hiroden-timetable/main/trains.csv").then(data => {
       console.log("CSV読み込み成功:", data);
-
-      // TODO: 列車アイコンを追加する処理（ここに前回作った train rect + text の処理を入れる）
+      // 列車アイコンの描画処理はここに追加
     }).catch(err => {
       console.error("CSV読み込み失敗:", err);
     });
