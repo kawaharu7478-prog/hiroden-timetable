@@ -117,12 +117,13 @@
           const padding = 10;
 
           const textElem = trainGroup.append("text")
-            .attr("x", pos.x)
-            .attr("y", pos.y)
-            .attr("text-anchor","middle")
-            .attr("dominant-baseline","middle")
-            .attr("font-size","12px")
-            .text(train.train_name);
+  .attr("x", pos.x)
+  .attr("y", yTop + (yBottom - yTop)/2)  // 枠の中心に文字を配置
+  .attr("text-anchor","middle")
+  .attr("dominant-baseline","middle")
+  .attr("font-size","12px")
+  .text(train.train_name);
+
 
           const textWidth = textElem.node().getBBox().width + padding*2;
           const textHeight = textElem.node().getBBox().height + padding;
