@@ -3,162 +3,145 @@
 <head>
   <meta charset="UTF-8">
   <title>列車走行位置表示</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
   <style>
-    body {
-      font-family: sans-serif;
-    }
-    #container {
-      width: 100%;
-      overflow-x: scroll;
-    }
-    svg {
-      border: 1px solid #ccc;
-    }
-    #clock {
-      font-size: 18px;
-      margin: 10px;
-    }
+    body { font-family: sans-serif; }
+    svg { background: #fff; }
+    .station-label { font-size: 12px; text-anchor: middle; }
+    .train-label { font-size: 12px; pointer-events: none; }
+    .time-display { font-size: 16px; font-weight: bold; }
   </style>
 </head>
 <body>
-  <div id="clock"></div>
-  <div id="container">
-    <svg id="railway" height="300"></svg>
-  </div>
+  <div id="clock" class="time-display"></div>
+  <svg id="chart" width="1000" height="300"></svg>
 
-  <script src="https://d3js.org/d3.v7.min.js"></script>
   <script>
+    const svg = d3.select("#chart");
+    const width = +svg.attr("width");
+    const height = +svg.attr("height");
+
     // 駅リスト
-    const stations = ["宮島口","阿品","阿品東","地御前","ＪＡ","宮内","廿市役","廿日市",
-                      "山陽","楽々園","佐伯区","五日市","修大協","井口","商工","草津南",
-                      "草津","古江","高須","東高須","西広島","福島町","西観音","観音町",
-                      "天満町","小網町","土橋","十日市","本川町","ドーム","紙屋西",
-                      "紙屋東","立町","八丁堀","胡町","銀山町","稲荷町","広島駅"];
+    const stations = [
+      "宮島口","阿品","阿品東","地御前","ＪＡ","宮内","廿市役","廿日市",
+      "山陽","楽々園","佐伯区","五日市","修大協","井口","商工","草津南","草津",
+      "古江","高須","東高須","西広島","福島町","西観音","観音町","天満町",
+      "小網町","土橋","十日市","本川町","ドーム","紙屋西","紙屋東","立町",
+      "八丁堀","胡町","銀山町","稲荷町","広島駅"
+    ];
 
-    const stationSpacing = 200; // 駅間隔を広めに
-    const stationPositions = stations.map((_, i) => i * stationSpacing);
-    const svgWidth = stationSpacing * (stations.length - 1) + 200;
+    // スケール
+    const xScale = d3.scalePoint()
+      .domain(stations)
+      .range([50, width - 50]);
 
-    const svg = d3.select("#railway")
-      .attr("width", svgWidth);
+    const upLineY = height / 2 - 20;
+    const downLineY = height / 2 + 20;
 
-    // 上下線の線
+    // ライン（上下）
     svg.append("line")
-      .attr("x1", 0).attr("y1", 80)
-      .attr("x2", svgWidth).attr("y2", 80)
+      .attr("x1", 50).attr("x2", width - 50)
+      .attr("y1", upLineY).attr("y2", upLineY)
       .attr("stroke", "black").attr("stroke-width", 2);
 
     svg.append("line")
-      .attr("x1", 0).attr("y1", 200)
-      .attr("x2", svgWidth).attr("y2", 200)
+      .attr("x1", 50).attr("x2", width - 50)
+      .attr("y1", downLineY).attr("y2", downLineY)
       .attr("stroke", "black").attr("stroke-width", 2);
 
-    // 駅名（中央に表示）
-    stations.forEach((s, i) => {
-      svg.append("text")
-        .attr("x", stationPositions[i])
-        .attr("y", 140)
-        .attr("text-anchor", "middle")
-        .attr("font-size", "12")
-        .text(s);
-    });
+    // 駅名ラベル（中央）
+    svg.selectAll(".station-label")
+      .data(stations)
+      .enter()
+      .append("text")
+      .attr("class", "station-label")
+      .attr("x", d => xScale(d))
+      .attr("y", height / 2)
+      .attr("dy", "0.35em")
+      .text(d => d);
 
-    // CSVを読み込む
-    const csvUrl = "https://raw.githubusercontent.com/ユーザー名/リポジトリ名/main/timetable.csv"; // ←差し替え
-    let trains = [];
+    // 現在時刻表示
+    function updateClock() {
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2,"0");
+      const mm = String(now.getMinutes()).padStart(2,"0");
+      const ss = String(now.getSeconds()).padStart(2,"0");
+      d3.select("#clock").text(`${hh}:${mm}:${ss}`);
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // CSV 読み込み
+    const csvUrl = "YOUR_CSV_URL.csv"; // ←GitHub PagesのCSV URLに置き換える
 
     d3.csv(csvUrl).then(data => {
-      trains = data.map(d => ({
-        train_id: +d.train_id,
-        train_name: d.train_name,
-        direction: d.direction,
-        times: stations.map(s => d[s] || "")
-      }));
-      d3.timer(update);
-    });
-
-    function parseTime(str) {
-      if (!str) return null;
-      const [h, m] = str.split(":").map(Number);
-      return h * 60 + m;
-    }
-
-    function getTrainPosition(train, now) {
-      const indices = (train.direction === "up")
-        ? [...Array(stations.length).keys()] // 0..N
-        : [...Array(stations.length).keys()].reverse(); // N..0
-      const times = stations.map((s, i) => parseTime(train.times[i]));
-
-      for (let i = 0; i < indices.length - 1; i++) {
-        const a = indices[i], b = indices[i+1];
-        const tA = times[a], tB = times[b];
-        if (tA == null || tB == null) continue;
-        if (now >= tA && now <= tB) {
-          const ratio = (now - tA) / (tB - tA);
-          const x = stationPositions[a] + (stationPositions[b] - stationPositions[a]) * ratio;
-          const y = (train.direction === "up") ? 60 : 220; // 線からずらす
-          return {x, y};
-        }
-      }
-      return null;
-    }
-
-    function drawTrain(g, train, pos) {
-      const name = train.train_name;
-      const paddingX = 12, paddingY = 6;
-
-      // テキストサイズを仮に計測
-      const temp = svg.append("text").attr("x", -1000).text(name).attr("font-size", 14);
-      const bbox = temp.node().getBBox();
-      temp.remove();
-
-      const w = bbox.width + paddingX * 2;
-      const h = bbox.height + paddingY * 2;
-      const x = pos.x - w/2;
-      const y = pos.y - h/2;
-
-      // 矩形＋進行方向側を尖らせる（ポリゴン）
-      let points;
-      if (train.direction === "up") {
-        points = [
-          [x, y], [x+w-10, y], [x+w, y+h/2], [x+w-10, y+h], [x, y+h]
-        ];
-      } else {
-        points = [
-          [x+10, y], [x+w, y], [x+w, y+h], [x+10, y+h], [x, y+h/2]
-        ];
-      }
-
-      g.append("polygon")
-        .attr("points", points.map(p => p.join(",")).join(" "))
-        .attr("fill", train.train_id >= 30000 ? "#ccc" : "white")
-        .attr("stroke", "black");
-
-      g.append("text")
-        .attr("x", pos.x)
-        .attr("y", pos.y+5) // 中央寄せ
-        .attr("text-anchor", "middle")
-        .attr("font-size", 14)
-        .text(name);
-    }
-
-    function update() {
-      const nowDate = new Date();
-      const now = nowDate.getHours() * 60 + nowDate.getMinutes() + nowDate.getSeconds()/60;
-
-      // 時計表示
-      document.getElementById("clock").textContent = nowDate.toLocaleTimeString();
-
-      svg.selectAll(".train").remove();
-
-      trains.forEach(train => {
-        const pos = getTrainPosition(train, now);
-        if (pos) {
-          const g = svg.append("g").attr("class", "train");
-          drawTrain(g, train, pos);
-        }
+      // 時刻を分に変換
+      data.forEach(d => {
+        stations.forEach(s => {
+          if (d[s]) {
+            const [h, m] = d[s].split(":").map(Number);
+            d[s] = h * 60 + m;
+          } else {
+            d[s] = null;
+          }
+        });
       });
-    }
-  </script>
-</body>
-</html>
+
+      function interpolatePosition(train, nowMinutes) {
+        let prevStation = null, nextStation = null;
+        let prevTime = null, nextTime = null;
+
+        for (let i = 0; i < stations.length; i++) {
+          const t = train[stations[i]];
+          if (t !== null && t <= nowMinutes) {
+            prevStation = stations[i];
+            prevTime = t;
+          }
+          if (t !== null && t > nowMinutes) {
+            nextStation = stations[i];
+            nextTime = t;
+            break;
+          }
+        }
+
+        if (!prevStation || !nextStation) return null;
+
+        const ratio = (nowMinutes - prevTime) / (nextTime - prevTime);
+        const x = xScale(prevStation) + (xScale(nextStation) - xScale(prevStation)) * ratio;
+        return { x, station: prevStation, nextStation };
+      }
+
+      function updateTrains() {
+        const now = new Date();
+        const nowMinutes = now.getHours() * 60 + now.getMinutes() + now.getSeconds()/60;
+
+        const trains = data.map(train => {
+          const pos = interpolatePosition(train, nowMinutes);
+          return pos ? { ...train, pos } : null;
+        }).filter(d => d !== null);
+
+        const g = svg.selectAll(".train")
+          .data(trains, d => d.train_id);
+
+        const gEnter = g.enter().append("g").attr("class","train");
+
+        gEnter.append("rect");
+        gEnter.append("polygon");
+        gEnter.append("text").attr("class","train-label");
+
+        const gAll = gEnter.merge(g);
+
+        gAll.each(function(d){
+          const baseY = d.direction === "up" ? upLineY : downLineY;
+          const rectWidth = 40, rectHeight = 20;
+          const rectX = d.pos.x - rectWidth/2;
+          const rectY = baseY - rectHeight - 5;
+
+          const fillColor = d.train_id >= 30000 ? "lightgray" : "white";
+          const strokeColor = "black";
+
+          d3.select(this).select("rect")
+            .attr("x", rectX)
+            .attr("y", rectY)
+            .attr("width", rectWidth)
+            .attr("height
