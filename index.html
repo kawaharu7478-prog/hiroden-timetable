@@ -1,188 +1,407 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
-  <title>列車走行位置表示</title>
-  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <meta charset="utf-8" />
+  <title>列車走行位置（ライン表示・可変幅ラベル）</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
   <style>
-    body { font-family: sans-serif; }
-    svg { background: #fff; }
-    .station-label { font-size: 12px; text-anchor: middle; }
-    .train-label { font-size: 12px; pointer-events: none; }
-    .time-display { font-size: 16px; font-weight: bold; }
+    body{font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", "Hiragino Kaku Gothic ProN", "メイリオ", sans-serif; padding:12px;}
+    #controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;}
+    input[type="text"]{width:640px;padding:6px;border-radius:6px;border:1px solid #ccc;}
+    button{padding:6px 10px;border-radius:6px;border:1px solid #888;background:#f6f6f6;cursor:pointer;}
+    #container{overflow-x:auto;border:1px solid #ddd;padding:8px;border-radius:8px;background:#fff;}
+    #clock{font-weight:700;margin-bottom:6px;}
+    .status{margin-left:8px;color:#333;font-size:13px;}
+    svg{display:block;height:420px;}
   </style>
 </head>
 <body>
-  <div id="clock" class="time-display"></div>
-  <svg id="chart" width="1000" height="300"></svg>
+  <h2>列車走行位置（ライン表示）</h2>
 
-  <script>
-    const svg = d3.select("#chart");
-    const width = +svg.attr("width");
-    const height = +svg.attr("height");
+  <div id="controls">
+    <label>CSV raw URL（GitHub）</label>
+    <input id="csvUrl" type="text" placeholder="https://raw.githubusercontent.com/ユーザ名/リポ名/main/trains.csv" />
+    <button id="btnLoadUrl">Load</button>
 
-    // 駅リスト
-    const stations = [
-      "宮島口","阿品","阿品東","地御前","ＪＡ","宮内","廿市役","廿日市",
-      "山陽","楽々園","佐伯区","五日市","修大協","井口","商工","草津南","草津",
-      "古江","高須","東高須","西広島","福島町","西観音","観音町","天満町",
-      "小網町","土橋","十日市","本川町","ドーム","紙屋西","紙屋東","立町",
-      "八丁堀","胡町","銀山町","稲荷町","広島駅"
-    ];
+    <label>またはローカルCSV</label>
+    <input id="fileInput" type="file" accept=".csv" />
 
-    // スケール
-    const xScale = d3.scalePoint()
-      .domain(stations)
-      .range([50, width - 50]);
+    <label style="margin-left:auto">Auto-refresh</label>
+    <input id="autoRefresh" type="checkbox" />
+    <input id="refreshSec" type="number" min="10" value="60" style="width:70px" /> 秒
 
-    const upLineY = height / 2 - 20;
-    const downLineY = height / 2 + 20;
+    <span id="status" class="status">準備OK</span>
+  </div>
 
-    // ライン（上下）
-    svg.append("line")
-      .attr("x1", 50).attr("x2", width - 50)
-      .attr("y1", upLineY).attr("y2", upLineY)
-      .attr("stroke", "black").attr("stroke-width", 2);
+  <div id="clock">現在時刻：--:--:--</div>
 
-    svg.append("line")
-      .attr("x1", 50).attr("x2", width - 50)
-      .attr("y1", downLineY).attr("y2", downLineY)
-      .attr("stroke", "black").attr("stroke-width", 2);
+  <div id="container">
+    <svg id="svg"></svg>
+  </div>
 
-    // 駅名ラベル（中央）
-    svg.selectAll(".station-label")
-      .data(stations)
-      .enter()
-      .append("text")
-      .attr("class", "station-label")
-      .attr("x", d => xScale(d))
-      .attr("y", height / 2)
-      .attr("dy", "0.35em")
-      .text(d => d);
+<script>
+(() => {
+  // -----------------------------
+  // 設定（駅名／順序）———— 必要なら編集
+  // -----------------------------
+  const stations = [
+    "宮島口","阿品","阿品東","地御前","ＪＡ","宮内","廿市役","廿日市","山陽","楽々園",
+    "佐伯区","五日市","修大協","井口","商工","草津南","草津","古江","高須","東高須",
+    "西広島","福島町","西観音","観音町","天満町","小網町","土橋","十日市","本川町",
+    "ドーム","紙屋西","紙屋東","立町","八丁堀","胡町","銀山町","稲荷町","広島駅"
+  ];
 
-    // 現在時刻表示
-    function updateClock() {
-      const now = new Date();
-      const hh = String(now.getHours()).padStart(2,"0");
-      const mm = String(now.getMinutes()).padStart(2,"0");
-      const ss = String(now.getSeconds()).padStart(2,"0");
-      d3.select("#clock").text(`${hh}:${mm}:${ss}`);
-    }
-    setInterval(updateClock, 1000);
-    updateClock();
+  // 表示設定
+  const paddingLeft = 80;
+  const paddingRight = 80;
+  const stationGap = 140; // 駅間幅（px）。必要なら調整
+  const upLineY = 120;    // 上りラインの y
+  const downLineY = 300;  // 下りラインの y
+  const labelFontSize = 14; // フォントサイズ（固定）
+  const labelPaddingX = 12; // 各ラベルの左右パディング
+  const labelPaddingY = 6;  // 縦パディング
+  const arrowWidth = 12;    // 突起（三角）の幅
 
-    // CSV 読み込み
-    const csvUrl = "YOUR_CSV_URL.csv"; // ←GitHub PagesのCSV URLに置き換える
+  // UI Elements
+  const svg = document.getElementById('svg');
+  const csvUrlInput = document.getElementById('csvUrl');
+  const btnLoadUrl = document.getElementById('btnLoadUrl');
+  const fileInput = document.getElementById('fileInput');
+  const statusEl = document.getElementById('status');
+  const clockEl = document.getElementById('clock');
+  const autoRefreshCheck = document.getElementById('autoRefresh');
+  const refreshSecInput = document.getElementById('refreshSec');
 
-    d3.csv(csvUrl).then(data => {
-      // 時刻を分に変換
-      data.forEach(d => {
-        stations.forEach(s => {
-          if (d[s]) {
-            const [h, m] = d[s].split(":").map(Number);
-            d[s] = h * 60 + m;
-          } else {
-            d[s] = null;
-          }
-        });
-      });
+  // 内部状態
+  let trains = []; // parsed rows
+  let svgWidth = paddingLeft + paddingRight + stationGap*(stations.length - 1);
+  svg.setAttribute('viewBox', `0 0 ${svgWidth} 420`);
+  svg.setAttribute('width', Math.min(svgWidth, Math.max(1000, svgWidth)));
 
-      function interpolatePosition(train, nowMinutes) {
-        let prevStation = null, nextStation = null;
-        let prevTime = null, nextTime = null;
+  let autoRefreshTimer = null;
+  let rafId = null;
 
-        for (let i = 0; i < stations.length; i++) {
-          const t = train[stations[i]];
-          if (t !== null && t <= nowMinutes) {
-            prevStation = stations[i];
-            prevTime = t;
-          }
-          if (t !== null && t > nowMinutes) {
-            nextStation = stations[i];
-            nextTime = t;
-            break;
-          }
-        }
+  // -----------------------------
+  // ヘルパー
+  // -----------------------------
+  function nowMs() {
+    const n = new Date();
+    return n.getHours()*3600000 + n.getMinutes()*60000 + n.getSeconds()*1000 + n.getMilliseconds();
+  }
+  function nowHM() {
+    const n = new Date();
+    const hh = String(n.getHours()).padStart(2,'0');
+    const mm = String(n.getMinutes()).padStart(2,'0');
+    const ss = String(n.getSeconds()).padStart(2,'0');
+    return `${hh}:${mm}:${ss}`;
+  }
+  function hhmmToMs(hhmm) {
+    if (!hhmm) return null;
+    const s = String(hhmm).trim();
+    if (!/^\d{1,2}:\d{2}$/.test(s)) return null;
+    const [h,m] = s.split(':').map(Number);
+    return (h*60 + m) * 60 * 1000;
+  }
 
-        if (!prevStation || !nextStation) return null;
+  function clearSvgChildren() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+  }
 
-        const ratio = (nowMinutes - prevTime) / (nextTime - prevTime);
-        const x = xScale(prevStation) + (xScale(nextStation) - xScale(prevStation)) * ratio;
-        return { x, station: prevStation, nextStation };
-      }
+  // -----------------------------
+  // 静的描画（ラインと駅名）
+  // -----------------------------
+  function renderStatic() {
+    clearSvgChildren();
+    // adjust svg width if needed
+    svgWidth = paddingLeft + paddingRight + stationGap*(stations.length - 1);
+    svg.setAttribute('viewBox', `0 0 ${svgWidth} 420`);
+    svg.setAttribute('width', Math.min(svgWidth, Math.max(1000, svgWidth)));
 
-      function updateTrains() {
-        const now = new Date();
-        const nowMinutes = now.getHours() * 60 + now.getMinutes() + now.getSeconds()/60;
+    // lines
+    const lineUp = makeSVG('line', {x1:paddingLeft, y1:upLineY, x2:svgWidth-paddingRight, y2:upLineY, stroke:'black', 'stroke-width':2});
+    const lineDown = makeSVG('line', {x1:paddingLeft, y1:downLineY, x2:svgWidth-paddingRight, y2:downLineY, stroke:'black', 'stroke-width':2});
+    svg.appendChild(lineUp); svg.appendChild(lineDown);
 
-        const trains = data.map(train => {
-          const pos = interpolatePosition(train, nowMinutes);
-          return pos ? { ...train, pos } : null;
-        }).filter(d => d !== null);
-
-        const g = svg.selectAll(".train")
-          .data(trains, d => d.train_id);
-
-        const gEnter = g.enter().append("g").attr("class","train");
-
-        gEnter.append("rect");
-        gEnter.append("polygon");
-        gEnter.append("text").attr("class","train-label");
-
-        const gAll = gEnter.merge(g);
-
-        gAll.each(function(d){
-          const baseY = d.direction === "up" ? upLineY : downLineY;
-          const rectWidth = 40, rectHeight = 20;
-          const rectX = d.pos.x - rectWidth/2;
-          const rectY = baseY - rectHeight - 5;
-
-          const fillColor = d.train_id >= 30000 ? "lightgray" : "white";
-          const strokeColor = "black";
-
-          d3.select(this).select("rect")
-            .attr("x", rectX)
-            .attr("y", rectY)
-            .attr("width", rectWidth)
-            .attr("height", rectHeight)
-            .attr("fill", fillColor)
-            .attr("stroke", strokeColor);
-
-          // 矢印（三角形）
-          const arrowSize = 10;
-          let points;
-          if (d.direction === "up") {
-            points = [
-              [rectX + rectWidth, rectY],
-              [rectX + rectWidth + arrowSize, rectY + rectHeight/2],
-              [rectX + rectWidth, rectY + rectHeight]
-            ];
-          } else {
-            points = [
-              [rectX, rectY],
-              [rectX - arrowSize, rectY + rectHeight/2],
-              [rectX, rectY + rectHeight]
-            ];
-          }
-          d3.select(this).select("polygon")
-            .attr("points", points.map(p => p.join(",")).join(" "))
-            .attr("fill", fillColor)
-            .attr("stroke", strokeColor);
-
-          // 列車名
-          d3.select(this).select("text")
-            .attr("x", d.pos.x)
-            .attr("y", rectY + rectHeight/2 + 4)
-            .attr("text-anchor", "middle")
-            .text(d.train_name);
-        });
-
-        g.exit().remove();
-      }
-
-      setInterval(updateTrains, 1000);
-      updateTrains();
+    // station labels (center between lines)
+    const labelY = (upLineY + downLineY)/2;
+    stations.forEach((s,i) => {
+      const x = paddingLeft + i*stationGap;
+      const t = makeSVG('text',{x:x, y:labelY, 'text-anchor':'middle', 'dominant-baseline':'central', 'font-size':12, 'class':'station-label'});
+      t.textContent = s;
+      svg.appendChild(t);
     });
-  </script>
+  }
+
+  function makeSVG(tag, attrs={}) {
+    const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  // -----------------------------
+  // CSV パース → 内部データ構築
+  // -----------------------------
+  function handleParsed(rows, fields) {
+    // fields include header order. We expect train_id,train_name,direction first
+    const header = fields.slice();
+    // validate
+    if (!header.includes('train_id') || !header.includes('direction')) {
+      statusEl.textContent = 'CSV に train_id と direction の列が必要です。';
+      return;
+    }
+    // Train objects: keep timesMs array aligned to stations indexes
+    trains = rows.filter(r => r && r.train_id).map(r => {
+      const timesMs = stations.map(s => hhmmToMs(r[s]));
+      return {
+        train_id: String(r.train_id),
+        train_name: r.train_name || r.train_id,
+        direction: String((r.direction||'').toLowerCase()),
+        timesMs: timesMs,
+        raw: r
+      };
+    });
+
+    statusEl.textContent = `読み込み完了：駅 ${stations.length} / 列車 ${trains.length}`;
+    renderStatic();
+    startLoop();
+  }
+
+  // -----------------------------
+  // 位置補間ロジック（物理順で探索）
+  // -----------------------------
+  function getPositionForTrain(train, now) {
+    // now: ms since midnight
+    const n = stations.length;
+    // physical station index order depends on direction:
+    // up: 0..n-1 (left->right), down: n-1..0 (right->left)
+    const phys = (train.direction === 'down') ? Array.from({length:n}, (_,i)=>n-1-i) : Array.from({length:n}, (_,i)=>i);
+
+    for (let k=0;k<phys.length-1;k++){
+      const iA = phys[k], iB = phys[k+1];
+      const tA = train.timesMs[iA], tB = train.timesMs[iB];
+      if (tA==null || tB==null) continue;
+      const tMin = Math.min(tA,tB), tMax = Math.max(tA,tB);
+      if (now < tMin || now > tMax) continue;
+      // ratio relative to A->B
+      const denom = (tB - tA);
+      const ratio = denom === 0 ? 0 : (now - tA) / denom;
+      // x positions (left->right increasing)
+      const xA = paddingLeft + iA * stationGap;
+      const xB = paddingLeft + iB * stationGap;
+      const x = xA + (xB - xA) * ratio;
+      // y offset: put trains slightly away from line
+      const y = (train.direction === 'up') ? (upLineY - 18) : (downLineY + 18);
+      return {x, y, iA, iB, ratio};
+    }
+    return null;
+  }
+
+  // -----------------------------
+  // 描画（毎フレーム）
+  // -----------------------------
+  function renderFrame() {
+    const now = nowMs();
+    // update clock
+    clockEl.textContent = '現在時刻：' + nowHM();
+
+    // remove old train group if any, then redraw all trains each frame for simplicity
+    // (we could reuse nodes, but redrawing is simpler and still fast for modest counts)
+    // Remove previous train groups
+    Array.from(svg.querySelectorAll('.train-group')).forEach(n => n.remove());
+
+    trains.forEach(train => {
+      const pos = getPositionForTrain(train, now);
+      if (!pos) return;
+      const g = makeSVG('g', {'class':'train-group'});
+      svg.appendChild(g);
+
+      // Determine label text and measure width using a temp text element with fixed font-size
+      const txt = makeSVG('text', {'font-size': labelFontSize, 'visibility':'hidden'});
+      txt.textContent = train.train_name;
+      svg.appendChild(txt);
+      const bbox = txt.getBBox();
+      svg.removeChild(txt);
+
+      const textW = bbox.width;
+      const rectW = textW + labelPaddingX*2;
+      const rectH = bbox.height + labelPaddingY*2;
+
+      const rectX = pos.x - rectW/2;
+      const rectY = pos.y - rectH/2;
+
+      // polygon points for pointed rectangle
+      let polyPoints;
+      if (train.direction === 'down') {
+        // left-pointed (point on left side)
+        polyPoints = [
+          [rectX + arrowWidth, rectY],
+          [rectX + rectW, rectY],
+          [rectX + rectW, rectY + rectH],
+          [rectX + arrowWidth, rectY + rectH],
+          [rectX, rectY + rectH/2]
+        ];
+      } else {
+        // right-pointed (point on right side)
+        polyPoints = [
+          [rectX, rectY],
+          [rectX + rectW - arrowWidth, rectY],
+          [rectX + rectW, rectY + rectH/2],
+          [rectX + rectW - arrowWidth, rectY + rectH],
+          [rectX, rectY + rectH]
+        ];
+      }
+
+      const poly = makeSVG('polygon', { points: polyPoints.map(p=>p.join(',')).join(' ') });
+      // fill color condition
+      const idNum = Number(train.train_id);
+      if (!isNaN(idNum) && idNum >= 30000) {
+        poly.setAttribute('fill', '#cccccc');
+      } else {
+        poly.setAttribute('fill', 'white');
+      }
+      poly.setAttribute('stroke','black');
+      g.appendChild(poly);
+
+      // text inside rect - visible
+      const textEl = makeSVG('text', {'font-size': labelFontSize, 'text-anchor':'middle', 'dominant-baseline':'middle'});
+      textEl.setAttribute('x', pos.x);
+      textEl.setAttribute('y', pos.y + 1); // a small nudge for vertical centering
+      textEl.textContent = train.train_name;
+      g.appendChild(textEl);
+    });
+  }
+
+  function loop() {
+    renderFrame();
+    rafId = requestAnimationFrame(loop);
+  }
+
+  function startLoop() {
+    if (rafId) return;
+    rafId = requestAnimationFrame(loop);
+  }
+  function stopLoop() {
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = null;
+  }
+
+  // -----------------------------
+  // CSV ロード（URL or file）
+  // -----------------------------
+  function loadCsvUrl(url) {
+    if (!url) { statusEl.textContent = 'URLを入力してください'; return; }
+    statusEl.textContent = 'CSV 取得中…';
+    Papa.parse(url, {
+      download: true,
+      header: true,
+      skipEmptyLines: true,
+      complete: (res) => {
+        if (res && res.data && res.meta && res.meta.fields) {
+          handleParsed(res.data, res.meta.fields);
+        } else {
+          statusEl.textContent = 'CSV 取得に失敗しました';
+        }
+      },
+      error: (err) => {
+        statusEl.textContent = 'CSV 取得エラー: ' + err;
+      }
+    });
+  }
+
+  function loadCsvFile(file) {
+    if (!file) return;
+    statusEl.textContent = 'ローカルCSV 解析中…';
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (res) => {
+        if (res && res.data && res.meta && res.meta.fields) {
+          handleParsed(res.data, res.meta.fields);
+        } else {
+          statusEl.textContent = 'CSV 解析に失敗しました';
+        }
+      },
+      error: err => statusEl.textContent = 'CSV 解析エラー: ' + err
+    });
+  }
+
+  // wrapper for Papa result
+  function handleParsed(data, fields) {
+    handleParsedCSV(data, fields);
+  }
+  function handleParsedCSV(rows, fields) {
+    // validate: header must contain stations columns (we assume train_id,train_name,direction present)
+    const header = fields.slice();
+    if (!header.includes('train_id') || !header.includes('direction')) {
+      statusEl.textContent = 'CSV のヘッダに train_id, direction が必要です';
+      return;
+    }
+    // convert times -> trains array
+    trains = rows.filter(r => r && r.train_id).map(r => {
+      return {
+        train_id: r.train_id,
+        train_name: r.train_name || r.train_id,
+        direction: (r.direction || 'up').toLowerCase(),
+        timesMs: stations.map(s => hhmmToMs( r[s] )),
+        raw: r
+      };
+    });
+    statusEl.textContent = `読み込み完了：駅 ${stations.length} / 列車 ${trains.length}`;
+    renderStatic();
+    startLoop();
+  }
+
+  // -----------------------------
+  // UI イベント
+  // -----------------------------
+  btnLoadUrl.addEventListener('click', () => {
+    const url = csvUrlInput.value.trim();
+    if (!url) { statusEl.textContent = 'CSV URL を入力してください'; return; }
+    loadCsvUrl(url);
+    // setup auto refresh
+    if (autoRefreshCheck.checked) {
+      startAutoRefresh(url);
+    } else {
+      stopAutoRefresh();
+    }
+  });
+
+  fileInput.addEventListener('change', e => {
+    const f = e.target.files && e.target.files[0];
+    if (f) {
+      loadCsvFile(f);
+      stopAutoRefresh();
+      autoRefreshCheck.checked = false;
+    }
+  });
+
+  autoRefreshCheck.addEventListener('change', () => {
+    if (!autoRefreshCheck.checked) { stopAutoRefresh(); statusEl.textContent = 'Auto-refresh 停止'; return; }
+    const url = csvUrlInput.value.trim();
+    if (!url) { statusEl.textContent = 'Auto-refresh には URL を入力してください'; autoRefreshCheck.checked=false; return; }
+    startAutoRefresh(url);
+  });
+
+  function startAutoRefresh(url) {
+    const sec = Math.max(10, Number(refreshSecInput.value) || 60);
+    stopAutoRefresh();
+    autoRefreshTimer = setInterval(()=> {
+      loadCsvUrl(url);
+    }, sec*1000);
+    statusEl.textContent = `Auto-refresh: ${sec}秒ごとに再取得`;
+  }
+  function stopAutoRefresh() {
+    if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
+  }
+
+  // 初期静的描画
+  renderStatic();
+  // start clock updater (for immediate display)
+  setInterval(()=> { clockEl.textContent = '現在時刻：' + nowHM(); }, 1000);
+  clockEl.textContent = '現在時刻：' + nowHM();
+
+})();
+</script>
 </body>
 </html>
