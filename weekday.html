@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>列車走行位置表示</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body { font-family: sans-serif; }
+    #time { font-size: 20px; margin: 10px; }
+    #chart { overflow-x: auto; border: 1px solid #ccc; white-space: nowrap; }
+    svg { display: block; }
+  </style>
+</head>
+<body>
+  <div id="time"></div>
+  <div id="chart">
+    <svg id="train-svg" height="300"></svg>
+  </div>
+
+  <script>
+    const csvUrl = "https://raw.githubusercontent.com/kawaharu7478-prog/hiroden-timetable/main/trains.csv";
+    const stations = [
+      "宮島口","阿品","阿品東","地御前","ＪＡ","宮内","廿市役","廿日市","山陽",
+      "楽々園","佐伯区","五日市","修大協","井口","商工","草津南","草津","古江",
+      "高須","東高須","西広島","福島町","西観音","観音町","天満町","小網町","土橋",
+      "十日市","本川町","ドーム","紙屋西","紙屋東","立町","八丁堀","胡町","銀山町",
+      "稲荷町","広島駅"
+    ];
+
+    const svg = d3.select("#train-svg");
+    const stationSpacing = 120;
+    const width = stations.length * stationSpacing;
+    const height = 300;
+    svg.attr("width", width);
+
+    const xScale = d3.scalePoint().domain(stations).range([50, width - 50]);
+    const lineY = height / 2;
+
+    svg.append("line")
+      .attr("x1", xScale(stations[0]))
+      .attr("y1", lineY)
+      .attr("x2", xScale(stations[stations.length - 1]))
+      .attr("y2", lineY)
+      .attr("stroke", "black")
+      .attr("stroke-width", 2);
+
+    svg.selectAll(".station-label")
+      .data(stations)
+      .enter()
+      .append("text")
+      .attr("class", "station-label")
+      .attr("x", d => xScale(d))
+      .attr("y", lineY)
+      .attr("dy", -10)
+      .attr("text-anchor", "middle")
+      .text(d => d);
+
+    function updateTimeDisplay() {
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2,"0");
+      const mm = String(now.getMinutes()).padStart(2,"0");
+      const ss = String(now.getSeconds()).padStart(2,"0");
+      document.getElementById("time").textContent = `${hh}:${mm}:${ss}`;
+    }
+    setInterval(updateTimeDisplay, 1000);
+    updateTimeDisplay();
+
+    d3.csv(csvUrl).then(data => {
+      data.forEach(d => {
+        d.train_id = +d.train_id;
+        d.times = Object.fromEntries(Object.entries(d).filter(([k])=>stations.includes(k)));
+      });
+
+      function getTrainPosition(train, stations, xScale){
+        const now = new Date();
+        const msNow = now.getHours()*3600e3 + now.getMinutes()*60e3 + now.getSeconds()*1000;
+
+        const timesMs = stations.map(st=>{
+          const t = train.times[st];
+          if(!t) return null;
+          const [h,m] = t.split(":").map(Number);
+          return (h*3600 + m*60)*1000;
+        });
+
+        for(let i=0;i<stations.length-1;i++){
+          let idxA = i, idxB = i+1;
+          if(train.direction==="down") [idxA, idxB] = [idxB, idxA];
+
+          let tA = timesMs[idxA], tB = timesMs[idxB];
+          if(tA==null || tB==null) continue;
+
+          let msNowAdj = msNow;
+          if(tB < tA){
+            tB += 24*3600e3;
+            if(msNow < tA) msNowAdj += 24*3600e3;
+          }
+
+          if(msNowAdj >= tA && msNowAdj <= tB){
+            const ratio = (msNowAdj - tA)/(tB - tA);
+            const x = xScale(stations[idxA]) + (xScale(stations[idxB]) - xScale(stations[idxA]))*ratio;
+            const y = train.direction==="up"? lineY-30 : lineY+30;
+            return {x,y};
+          }
+        }
+        return null;
+      }
+
+      function drawTrains(trains, stations, xScale){
+        svg.selectAll(".train").remove();
+        const trainGroup = svg.append("g").attr("class","train");
+
+        trains.forEach(train=>{
+          const pos = getTrainPosition(train, stations, xScale);
+          if(!pos) return;
+          const y = train.direction==="up"? lineY-40 : lineY+40;
+          const isGray = train.train_id >= 30000;
+          const padding = 10;
+
+          const textElem = trainGroup.append("text")
+            .attr("x", pos.x)
+            .attr("y", null) // ここは枠中心に調整
+            .attr("text-anchor","middle")
+            .attr("dominant-baseline","middle")
+            .attr("font-size","12px")
+            .text(train.train_name);
+
+          const textWidth = textElem.node().getBBox().width + padding*2;
+          const textHeight = textElem.node().getBBox().height + padding;
+
+          const xLeft = pos.x - textWidth/2;
+          const xRight = pos.x + textWidth/2;
+          const yTop = y - textHeight/2;
+          const yBottom = y + textHeight/2;
+
+          // 文字を枠中心に配置
+          textElem.attr("y", yTop + (yBottom - yTop)/2);
+
+          let points;
+          if(train.direction==="up"){
+            points = [[xLeft,yTop],[xRight-8,yTop],[xRight,y],[xRight-8,yBottom],[xLeft,yBottom]];
+          }else{
+            points = [[xRight,yTop],[xLeft+8,yTop],[xLeft,y],[xLeft+8,yBottom],[xRight,yBottom]];
+          }
+
+          trainGroup.insert("polygon","text")
+            .attr("points", points.map(p=>p.join(",")).join(" "))
+            .attr("fill", isGray?"lightgray":"white")
+            .attr("stroke","black")
+            .attr("stroke-width",1);
+        });
+      }
+
+      function update(){
+        drawTrains(data,stations,xScale);
+      }
+
+      setInterval(update,1000);
+      update();
+    });
+  </script>
+</body>
+</html>
