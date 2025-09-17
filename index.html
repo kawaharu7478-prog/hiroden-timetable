@@ -4,29 +4,30 @@
   <meta charset="UTF-8">
   <title>広電 列車走行位置</title>
   <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
   <style>
-    body { font-family: sans-serif; margin: 0; padding: 0; }
-    .container {
+    body { font-family: sans-serif; margin: 0; }
+    .scroll-container {
       width: 100%;
-      overflow-x: auto;   /* 横スクロール可能にする */
+      overflow-x: auto; /* 横スクロールを有効化 */
       border-bottom: 1px solid #ccc;
     }
-    svg {
-      display: block;
+    svg { display: block; }
+    .station-label {
+      font-size: 12px;
+      text-anchor: middle;
     }
-    .station { font-size: 12px; }
     .train rect {
-      height: 20px;
-      rx: 5;
-      ry: 5;
-      fill: lightblue;
-      stroke: black;
-      stroke-width: 1px;
+      height: 24px;
+      rx: 6;
+      ry: 6;
+      stroke-width: 1.5px;
     }
     .train text {
       font-size: 12px;
       dominant-baseline: middle;
       text-anchor: middle;
+      pointer-events: none;
     }
     .time-display {
       font-size: 16px;
@@ -36,7 +37,7 @@
 </head>
 <body>
   <div class="time-display" id="current-time"></div>
-  <div class="container">
+  <div class="scroll-container">
     <svg id="chart" height="400"></svg>
   </div>
 
@@ -49,65 +50,142 @@
     ];
 
     const height = 400;
-    const margin = {top: 50, right: 50, bottom: 50, left: 50};
-    const lineY = height / 2;
-
-    // 駅間隔を広く設定（例: 150pxごと）
-    const stationSpacing = 150;
-    const svgWidth = margin.left + margin.right + (stations.length - 1) * stationSpacing;
+    const paddingLeft = 80, paddingRight = 80;
+    const stationGap = 180; // ★ 駅間隔を広めに設定
+    const svgWidth = paddingLeft + paddingRight + (stations.length - 1) * stationGap;
 
     const svg = d3.select("#chart")
       .attr("width", svgWidth)
       .attr("height", height);
 
-    const xScale = d3.scalePoint()
-      .domain(stations)
-      .range([margin.left, svgWidth - margin.right]);
+    const upLineY = height / 2 - 40;
+    const downLineY = height / 2 + 40;
 
-    // 路線描画
+    // 路線
     svg.append("line")
-      .attr("x1", margin.left)
-      .attr("x2", svgWidth - margin.right)
-      .attr("y1", lineY)
-      .attr("y2", lineY)
-      .attr("stroke", "black");
+      .attr("x1", paddingLeft)
+      .attr("x2", svgWidth - paddingRight)
+      .attr("y1", upLineY)
+      .attr("y2", upLineY)
+      .attr("stroke", "black")
+      .attr("stroke-width", 2);
 
-    // 駅描画
-    svg.selectAll(".station")
-      .data(stations)
-      .enter()
-      .append("circle")
-      .attr("cx", d => xScale(d))
-      .attr("cy", lineY)
-      .attr("r", 4)
-      .attr("fill", "black");
+    svg.append("line")
+      .attr("x1", paddingLeft)
+      .attr("x2", svgWidth - paddingRight)
+      .attr("y1", downLineY)
+      .attr("y2", downLineY)
+      .attr("stroke", "black")
+      .attr("stroke-width", 2);
 
-    svg.selectAll(".station-label")
-      .data(stations)
-      .enter()
-      .append("text")
-      .attr("x", d => xScale(d))
-      .attr("y", lineY - 15)
-      .attr("text-anchor", "middle")
-      .attr("class", "station")
-      .text(d => d);
+    // 駅名（中央に1行で表示）
+    stations.forEach((st, i) => {
+      const x = paddingLeft + i * stationGap;
+      svg.append("text")
+        .attr("x", x)
+        .attr("y", (upLineY + downLineY) / 2)
+        .attr("class", "station-label")
+        .text(st);
+    });
 
     // 現在時刻表示
     function updateTimeDisplay() {
       const now = new Date();
-      const timeStr = now.toTimeString().slice(0, 5);
-      document.getElementById("current-time").textContent = "現在時刻: " + timeStr;
+      document.getElementById("current-time").textContent =
+        "現在時刻: " + now.toTimeString().slice(0, 5);
     }
     setInterval(updateTimeDisplay, 1000);
     updateTimeDisplay();
 
-    // CSV 読み込み（raw.githubusercontent.com を利用）
-    d3.csv("https://raw.githubusercontent.com/kawaharu7478-prog/hiroden-timetable/main/trains.csv").then(data => {
-      console.log("CSV読み込み成功:", data);
-      // 列車アイコンの描画処理はここに追加
-    }).catch(err => {
-      console.error("CSV読み込み失敗:", err);
+    // CSV 読み込み
+    const csvUrl = "https://raw.githubusercontent.com/kawaharu7478-prog/hiroden-timetable/main/trains.csv";
+    Papa.parse(csvUrl, {
+      download: true,
+      header: true,
+      complete: (res) => {
+        console.log("CSV loaded:", res.data);
+        handleParsed(res.data, res.meta.fields);
+      }
     });
+
+    function handleParsed(data, fields) {
+      const trains = data.map(row => {
+        const timesMs = stations.map(st => {
+          const t = row[st];
+          return t ? hhmmToMs(t) : null;
+        });
+        return {
+          id: row.train_id,
+          name: row.train_name,
+          direction: row.direction,
+          timesMs
+        };
+      });
+
+      // 描画ループ
+      setInterval(() => {
+        const now = new Date();
+        const msNow = now.getHours() * 3600e3 + now.getMinutes() * 60e3 + now.getSeconds() * 1000;
+
+        const trainSel = svg.selectAll(".train").data(trains, d => d.id);
+
+        const gEnter = trainSel.enter().append("g").attr("class", "train");
+        gEnter.append("rect");
+        gEnter.append("text");
+
+        trainSel.merge(gEnter).each(function(d) {
+          const pos = getPositionForTrain(d, msNow);
+          const g = d3.select(this);
+
+          if (pos) {
+            const textWidth = d.name.length * 14 + 20;
+            g.select("rect")
+              .attr("x", pos.x - textWidth / 2)
+              .attr("y", pos.y - 12)
+              .attr("width", textWidth)
+              .attr("fill", d.id >= 30000 ? "lightgray" : "white")
+              .attr("stroke", "black");
+
+            g.select("text")
+              .attr("x", pos.x)
+              .attr("y", pos.y)
+              .text(d.name);
+
+            g.attr("display", null);
+          } else {
+            g.attr("display", "none");
+          }
+        });
+      }, 1000);
+    }
+
+    // 位置補間
+    function getPositionForTrain(train, now) {
+      const n = stations.length;
+      const idxSeq = train.direction === "down"
+        ? Array.from({length: n}, (_, i) => n - 1 - i)
+        : Array.from({length: n}, (_, i) => i);
+
+      for (let k = 0; k < idxSeq.length - 1; k++) {
+        const iA = idxSeq[k], iB = idxSeq[k+1];
+        const tA = train.timesMs[iA], tB = train.timesMs[iB];
+        if (tA == null || tB == null) continue;
+        if (now >= tA && now <= tB) {
+          const ratio = (now - tA) / (tB - tA);
+          const xA = paddingLeft + iA * stationGap;
+          const xB = paddingLeft + iB * stationGap;
+          const x = xA + (xB - xA) * ratio;
+          const y = train.direction === "up" ? (upLineY - 30) : (downLineY + 30);
+          return { x, y };
+        }
+      }
+      return null;
+    }
+
+    function hhmmToMs(hhmm) {
+      const [h, m] = hhmm.split(":").map(Number);
+      return (h * 3600 + m * 60) * 1000;
+    }
   </script>
 </body>
 </html>
