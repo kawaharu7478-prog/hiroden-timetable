@@ -144,4 +144,45 @@
             .attr("x", rectX)
             .attr("y", rectY)
             .attr("width", rectWidth)
-            .attr("height
+            .attr("height", rectHeight)
+            .attr("fill", fillColor)
+            .attr("stroke", strokeColor);
+
+          // 矢印（三角形）
+          const arrowSize = 10;
+          let points;
+          if (d.direction === "up") {
+            points = [
+              [rectX + rectWidth, rectY],
+              [rectX + rectWidth + arrowSize, rectY + rectHeight/2],
+              [rectX + rectWidth, rectY + rectHeight]
+            ];
+          } else {
+            points = [
+              [rectX, rectY],
+              [rectX - arrowSize, rectY + rectHeight/2],
+              [rectX, rectY + rectHeight]
+            ];
+          }
+          d3.select(this).select("polygon")
+            .attr("points", points.map(p => p.join(",")).join(" "))
+            .attr("fill", fillColor)
+            .attr("stroke", strokeColor);
+
+          // 列車名
+          d3.select(this).select("text")
+            .attr("x", d.pos.x)
+            .attr("y", rectY + rectHeight/2 + 4)
+            .attr("text-anchor", "middle")
+            .text(d.train_name);
+        });
+
+        g.exit().remove();
+      }
+
+      setInterval(updateTrains, 1000);
+      updateTrains();
+    });
+  </script>
+</body>
+</html>
