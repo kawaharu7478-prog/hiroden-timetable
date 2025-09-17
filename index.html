@@ -117,13 +117,12 @@
           const padding = 10;
 
           const textElem = trainGroup.append("text")
-  .attr("x", pos.x)
-  .attr("y", yTop + (yBottom - yTop)/2)  // 枠の中心に文字を配置
-  .attr("text-anchor","middle")
-  .attr("dominant-baseline","middle")
-  .attr("font-size","12px")
-  .text(train.train_name);
-
+            .attr("x", pos.x)
+            .attr("y", null) // ここは枠中心に調整
+            .attr("text-anchor","middle")
+            .attr("dominant-baseline","middle")
+            .attr("font-size","12px")
+            .text(train.train_name);
 
           const textWidth = textElem.node().getBBox().width + padding*2;
           const textHeight = textElem.node().getBBox().height + padding;
@@ -132,6 +131,9 @@
           const xRight = pos.x + textWidth/2;
           const yTop = y - textHeight/2;
           const yBottom = y + textHeight/2;
+
+          // 文字を枠中心に配置
+          textElem.attr("y", yTop + (yBottom - yTop)/2);
 
           let points;
           if(train.direction==="up"){
