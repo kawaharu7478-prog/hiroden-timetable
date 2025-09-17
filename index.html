@@ -1,17 +1,121 @@
-<script>
-function drawTrains(trains, stations, xScale) {
-    svg.selectAll(".train").remove();
-    const trainGroup = svg.append("g").attr("class", "train");
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>列車走行位置表示</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+    }
+    #time {
+      font-size: 20px;
+      margin: 10px;
+    }
+    #chart {
+      overflow-x: scroll;
+      border: 1px solid #ccc;
+      white-space: nowrap;
+    }
+    svg {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div id="time"></div>
+  <div id="chart">
+    <svg id="train-svg" height="300"></svg>
+  </div>
 
-    trains.forEach(train => {
-        const pos = getTrainPosition(train, stations, xScale);
-        if (pos === null) return;
+  <script>
+    const csvUrl = "https://raw.githubusercontent.com/kawaharu7478-prog/hiroden-timetable/main/trains.csv";
+    const stations = [
+      "宮島口","阿品","阿品東","地御前","ＪＡ","宮内","廿市役","廿日市","山陽",
+      "楽々園","佐伯区","五日市","修大協","井口","商工","草津南","草津","古江",
+      "高須","東高須","西広島","福島町","西観音","観音町","天満町","小網町","土橋",
+      "十日市","本川町","ドーム","紙屋西","紙屋東","立町","八丁堀","胡町","銀山町",
+      "稲荷町","広島駅"
+    ];
 
-        const y = train.direction === "up" ? height / 2 - 40 : height / 2 + 40;
-        const isGray = parseInt(train.train_id) >= 30000;
+    const svg = d3.select("#train-svg");
+    const stationSpacing = 120; // 駅間隔を広めに
+    const width = stations.length * stationSpacing;
+    const height = 300;
+    svg.attr("width", width);
 
-        const padding = 10;
-        const textElem = trainGroup.append("text")
+    const xScale = d3.scalePoint()
+      .domain(stations)
+      .range([50, width - 50]);
+
+    // 線路（上下共通）
+    svg.append("line")
+      .attr("x1", xScale(stations[0]))
+      .attr("y1", height / 2)
+      .attr("x2", xScale(stations[stations.length - 1]))
+      .attr("y2", height / 2)
+      .attr("stroke", "black")
+      .attr("stroke-width", 2);
+
+    // 駅名（中央に1行）
+    svg.selectAll(".station-label")
+      .data(stations)
+      .enter()
+      .append("text")
+      .attr("class", "station-label")
+      .attr("x", d => xScale(d))
+      .attr("y", height / 2)
+      .attr("dy", -10)
+      .attr("text-anchor", "middle")
+      .text(d => d);
+
+    // CSV 読み込み
+    d3.csv(csvUrl).then(data => {
+      data.forEach(d => {
+        d.train_id = +d.train_id;
+        d.times = Object.fromEntries(
+          Object.entries(d).filter(([k]) => stations.includes(k))
+        );
+      });
+
+      function getTrainPosition(train, stations, xScale) {
+        const now = new Date();
+        const currentTime = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+
+        const times = stations.map(st => {
+          const t = train.times[st];
+          if (!t) return null;
+          const [h, m] = t.split(":").map(Number);
+          return h * 60 + m;
+        });
+
+        let prevIndex = -1;
+        for (let i = 0; i < times.length; i++) {
+          if (times[i] !== null && times[i] <= currentTime) prevIndex = i;
+        }
+        if (prevIndex === -1 || prevIndex === times.length - 1) return null;
+
+        const t1 = times[prevIndex];
+        const t2 = times[prevIndex + 1];
+        if (t1 === null || t2 === null) return null;
+
+        const ratio = (currentTime - t1) / (t2 - t1);
+        return xScale(stations[prevIndex]) + (xScale(stations[prevIndex + 1]) - xScale(stations[prevIndex])) * ratio;
+      }
+
+      function drawTrains(trains, stations, xScale) {
+        svg.selectAll(".train").remove();
+        const trainGroup = svg.append("g").attr("class", "train");
+
+        trains.forEach(train => {
+          const pos = getTrainPosition(train, stations, xScale);
+          if (pos === null) return;
+
+          const y = train.direction === "up" ? height / 2 - 40 : height / 2 + 40;
+          const isGray = train.train_id >= 30000;
+
+          const padding = 10;
+          const textElem = trainGroup.append("text")
             .attr("x", pos)
             .attr("y", y)
             .attr("text-anchor", "middle")
@@ -19,40 +123,55 @@ function drawTrains(trains, stations, xScale) {
             .attr("font-size", "12px")
             .text(train.train_name);
 
-        const textWidth = textElem.node().getBBox().width + padding * 2;
-        const textHeight = textElem.node().getBBox().height + padding;
+          const textWidth = textElem.node().getBBox().width + padding * 2;
+          const textHeight = textElem.node().getBBox().height + padding;
 
-        const xLeft = pos - textWidth / 2;
-        const xRight = pos + textWidth / 2;
-        const yTop = y - textHeight / 2;
-        const yBottom = y + textHeight / 2;
+          const xLeft = pos - textWidth / 2;
+          const xRight = pos + textWidth / 2;
+          const yTop = y - textHeight / 2;
+          const yBottom = y + textHeight / 2;
 
-        let points;
-        if (train.direction === "up") {
-            // 右に尖った四角形
+          let points;
+          if (train.direction === "up") {
+            // 右に尖った長方形
             points = [
-                [xLeft, yTop],
-                [xRight - 8, yTop],
-                [xRight, y],
-                [xRight - 8, yBottom],
-                [xLeft, yBottom]
+              [xLeft, yTop],
+              [xRight - 8, yTop],
+              [xRight, y],
+              [xRight - 8, yBottom],
+              [xLeft, yBottom]
             ];
-        } else {
-            // 左に尖った四角形
+          } else {
+            // 左に尖った長方形
             points = [
-                [xRight, yTop],
-                [xLeft + 8, yTop],
-                [xLeft, y],
-                [xLeft + 8, yBottom],
-                [xRight, yBottom]
+              [xRight, yTop],
+              [xLeft + 8, yTop],
+              [xLeft, y],
+              [xLeft + 8, yBottom],
+              [xRight, yBottom]
             ];
-        }
+          }
 
-        trainGroup.insert("polygon", "text")
+          trainGroup.insert("polygon", "text")
             .attr("points", points.map(p => p.join(",")).join(" "))
             .attr("fill", isGray ? "lightgray" : "white")
             .attr("stroke", "black")
             .attr("stroke-width", 1);
+        });
+      }
+
+      function update() {
+        drawTrains(data, stations, xScale);
+
+        const now = new Date();
+        const hh = String(now.getHours()).padStart(2, "0");
+        const mm = String(now.getMinutes()).padStart(2, "0");
+        const ss = String(now.getSeconds()).padStart(2, "0");
+        document.getElementById("time").textContent = `${hh}:${mm}:${ss}`;
+      }
+
+      setInterval(update, 1000);
     });
-}
-</script>
+  </script>
+</body>
+</html>
