@@ -34,8 +34,8 @@
     svg.attr("width", width);
 
     const xScale = d3.scalePoint().domain(stations).range([50, width - 50]);
-
     const lineY = height / 2;
+
     svg.append("line")
       .attr("x1", xScale(stations[0]))
       .attr("y1", lineY)
@@ -71,32 +71,36 @@
         d.times = Object.fromEntries(Object.entries(d).filter(([k])=>stations.includes(k)));
       });
 
-      function getTrainPosition(train, stations, xScale) {
+      function getTrainPosition(train, stations, xScale){
         const now = new Date();
         const msNow = now.getHours()*3600e3 + now.getMinutes()*60e3 + now.getSeconds()*1000;
 
-        const timesMs = stations.map(st => {
+        const timesMs = stations.map(st=>{
           const t = train.times[st];
-          if (!t) return null;
+          if(!t) return null;
           const [h,m] = t.split(":").map(Number);
-          return (h*3600 + m*60) * 1000;
+          return (h*3600 + m*60)*1000;
         });
 
-        for(let i=0; i<stations.length-1; i++){
-          let tA = timesMs[i];
-          let tB = timesMs[i+1];
+        for(let i=0;i<stations.length-1;i++){
+          let tA = timesMs[i], tB = timesMs[i+1];
           if(tA==null || tB==null) continue;
 
-          // 日をまたぐ場合
           let msNowAdj = msNow;
-          if(tB < tA){ tB += 24*3600e3; if(msNow < tA) msNowAdj += 24*3600e3; }
+
+          // 日をまたぐ場合
+          if(tB < tA){
+            tB += 24*3600e3;
+            if(msNow < tA) msNowAdj += 24*3600e3;
+          }
 
           if(msNowAdj >= tA && msNowAdj <= tB){
+            const ratio = (msNowAdj - tA)/(tB - tA);
             let xA = xScale(stations[i]);
             let xB = xScale(stations[i+1]);
-            if(train.direction==="down") [xA,xB] = [xB,xA]; // 右→左
-            const x = xA + (xB - xA) * (msNowAdj - tA)/(tB - tA);
-            const y = train.direction==="up"? lineY-30: lineY+30;
+            // 下り列車は描画時のみ右→左
+            const x = train.direction==="down" ? xB - (xB - xA)*ratio : xA + (xB - xA)*ratio;
+            const y = train.direction==="up"? lineY-30 : lineY+30;
             return {x,y};
           }
         }
