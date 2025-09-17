@@ -51,7 +51,7 @@
 
     const height = 400;
     const paddingLeft = 80, paddingRight = 80;
-    const stationGap = 180; // ★ 駅間隔を広めに設定
+    const stationGap = 180; // 駅間隔
     const svgWidth = paddingLeft + paddingRight + (stations.length - 1) * stationGap;
 
     const svg = d3.select("#chart")
@@ -91,8 +91,8 @@
     // 現在時刻表示
     function updateTimeDisplay() {
       const now = new Date();
-      document.getElementById("current-time").textContent =
-        "現在時刻: " + now.toTimeString().slice(0, 5);
+      const timeStr = now.toLocaleTimeString("ja-JP", {hour: "2-digit", minute: "2-digit", second: "2-digit"});
+      document.getElementById("current-time").textContent = "現在時刻: " + timeStr;
     }
     setInterval(updateTimeDisplay, 1000);
     updateTimeDisplay();
@@ -104,18 +104,18 @@
       header: true,
       complete: (res) => {
         console.log("CSV loaded:", res.data);
-        handleParsed(res.data, res.meta.fields);
+        handleParsed(res.data);
       }
     });
 
-    function handleParsed(data, fields) {
+    function handleParsed(data) {
       const trains = data.map(row => {
         const timesMs = stations.map(st => {
           const t = row[st];
           return t ? hhmmToMs(t) : null;
         });
         return {
-          id: row.train_id,
+          id: Number(row.train_id),
           name: row.train_name,
           direction: row.direction,
           timesMs
